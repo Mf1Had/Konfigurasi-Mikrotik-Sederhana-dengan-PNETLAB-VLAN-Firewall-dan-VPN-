@@ -60,4 +60,56 @@ Dokumentasi praktik laboratorium rekayasa jaringan menggunakan **PNETLab** dan *
 
 ## 4. Kebijakan Keamanan Firewall (*Whitelist / Default Deny*)
 
-Secara bawaan, MikroTik melakukan *Inter-VLAN Routing* secara otomatis
+Secara bawaan, MikroTik melakukan *Inter-VLAN Routing* secara otomatis antar-subnet yang terhubung. Untuk mencegah kebocoran akses antara jaringan **Guest** dan **Staff**, diterapkan aturan **Firewall Filter berbasis Whitelist** pada chain `forward` di kedua router (mengizinkan hanya lalu lintas yang diperlukan dan memblokir sisanya di baris paling bawah).
+
+### A. Susunan Aturan Firewall `Router Branch`
+1. **`#0` (`accept`, `forward`):** Mengizinkan paket balasan (*Connection State:* `established, related`).
+2. **`#1` & `#2` (`accept`, `forward`):** Mengizinkan akses internet (`Out. Interface: ether1`) untuk VLAN 10 (`192.168.110.0/24`) dan VLAN 20 (`192.168.120.0/24`).
+3. **`#3` & `#5` (`accept`, `forward`):** Mengizinkan komunikasi dua arah sesama **VLAN 10 Staff** (`192.168.110.0/24` $\leftrightarrow$ `192.168.10.0/24`).
+4. **`#4` & `#6` (`accept`, `forward`):** Mengizinkan komunikasi dua arah sesama **VLAN 20 Guest** (`192.168.120.0/24` $\leftrightarrow$ `192.168.20.0/24`).
+5. **`#7` (`drop`, `forward`):** Menutup seluruh lalu lintas lintas-VLAN lainnya (*Default Deny*).
+
+![Firewall Router Branch](<Firewall Router Branch.png>)
+
+### B. Susunan Aturan Firewall `Router HQ`
+1. **`#0` (`drop`, `input`):** Memblokir akses manajemen publik (`TCP 8291, 22, 23`) yang masuk dari interface WAN `ether1`.
+2. **`#1` (`accept`, `forward`):** Mengizinkan paket balasan (*Connection State:* `established, related`).
+3. **`#2` & `#3` (`accept`, `forward`):** Mengizinkan akses internet (`Out. Interface: ether1`) untuk VLAN 10 (`192.168.10.0/24`) dan VLAN 20 (`192.168.20.0/24`).
+4. **`#4` & `#6` (`accept`, `forward`):** Mengizinkan komunikasi dua arah sesama **VLAN 10 Staff** (`192.168.10.0/24` $\leftrightarrow$ `192.168.110.0/24`).
+5. **`#5` & `#7` (`accept`, `forward`):** Mengizinkan komunikasi dua arah sesama **VLAN 20 Guest** (`192.168.20.0/24` $\leftrightarrow$ `192.168.120.0/24`).
+6. **`#8` (`drop`, `forward`):** Menutup seluruh lalu lintas lintas-VLAN lainnya (*Default Deny*).
+
+![Firewall Router HQ](<Firewall Router HQ.png>)
+
+---
+
+## 5. Matriks Hasil Pengujian & Verifikasi
+
+Pengujian dilakukan menggunakan perintah `ping` dari masing-masing klien (`VPC6` hingga `VPC11`) untuk memvalidasi konektivitas terowongan VPN sekaligus efektivitas isolasi *Firewall Whitelist*:
+
+| Jalur Pengujian (`Sumber` $\rightarrow$ `Tujuan`) | Status Hasil | Analisis Teknis |
+| :--- | :--- | :--- |
+| **`VPC6` / `VPC8` (Staff HQ)** $\leftrightarrow$ **`VPC10` (Staff Branch)** | **Berhasil (`Reply`)** | Komunikasi sesama VLAN 10 lintas kantor diizinkan melalui terowongan L2TP/IPsec. |
+| **`VPC7` / `VPC9` (Guest HQ)** $\leftrightarrow$ **`VPC11` (Guest Branch)** | **Berhasil (`Reply`)** | Komunikasi sesama VLAN 20 lintas kantor diizinkan melalui terowongan L2TP/IPsec. |
+| **`VPC7` / `VPC9` (Guest HQ)** $\rightarrow$ **`VPC6` / `VPC8` (Staff HQ)** | **Diblokir (`Timeout`)** | Isolasi antar-VLAN lokal berhasil ditahan oleh aturan `drop` paling bawah di `Router HQ`. |
+| **`VPC7` / `VPC9` (Guest HQ)** $\rightarrow$ **`VPC10` (Staff Branch)** | **Diblokir (`Timeout`)** | Guest HQ dicegah mengakses jaringan internal Staff Branch lintas-VPN oleh `Router HQ`. |
+| **`VPC11` (Guest Branch)** $\rightarrow$ **`VPC10` (Staff Branch) / `VPC6` (Staff HQ)** | **Diblokir (`Timeout`)** | Guest Branch langsung ditahan di pintu gerbang oleh aturan `drop` pada `Router Branch`. |
+| **Seluruh VPC (`VPC6` s.d. `VPC11`)** $\rightarrow$ **`8.8.8.8` (Internet)** | **Berhasil (`Reply`)** | Seluruh segmen jaringan dapat mengakses internet melalui translasi `NAT Masquerade`. |
+
+### Bukti Pengujian Koneksi yang Diizinkan (*Allowed*)
+* **`VPC6` (Staff HQ):** Berhasil terhubung ke `VPC10` (Staff Branch) dan internet (`8.8.8.8`).
+
+![Testing Ping Allowed VPC6](<Testing Ping Allowed VPC6.png>)
+
+* **`VPC7` (Guest HQ):** Berhasil terhubung ke `VPC11` (Guest Branch) dan internet (`8.8.8.8`).
+
+![Testing Ping Allowed VPC7](<Testing Ping Allowed VPC7.png>)
+
+### Bukti Pengujian Isolasi Antar-VLAN (*Blocked / Timeout*)
+* **`VPC7` (Guest HQ):** Diblokir saat mencoba menjangkau jaringan Staff HQ (`VPC6`) maupun Staff Branch (`VPC10`).
+
+![Testing Ping Blocked VPC7](<Testing Ping Blocked VPC7.png>)
+
+* **`VPC11` (Guest Branch):** Diblokir saat mencoba menjangkau jaringan Staff Branch (`VPC10`) maupun Staff HQ (`VPC6`).
+
+![Testing Ping Blocked VPC11](<Testing Ping Blocked VPC11.png>)
